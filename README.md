@@ -301,8 +301,13 @@ Instructions for this will be included in the README and on the site.
 ### Rust → WASM
 
 ```bash
-cd engine
-wasm-pack build --target web --out-dir ../frontend/public/wasm
+cd solana-engine
+wasm-pack build --target web --out-dir ../../frontend/public/wasm/solana-engine --release
+```
+
+```bash
+cd evm-engine
+wasm-pack build --target web --out-dir ../../frontend/public/wasm/evm-engine --release
 ```
 
 Output files placed in `frontend/public/wasm/`:

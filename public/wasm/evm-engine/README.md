@@ -302,10 +302,10 @@ Instructions for this will be included in the README and on the site.
 
 ```bash
 cd engine
-wasm-pack build --target web --out-dir ../web/public/wasm
+wasm-pack build --target web --out-dir ../frontend/public/wasm/evm-engine
 ```
 
-Output files placed in `web/public/wasm/`:
+Output files placed in `frontend/public/wasm/evm-engine/`:
 - `tunic_engine.js`
 - `tunic_engine_bg.wasm`
 - `package.json`
