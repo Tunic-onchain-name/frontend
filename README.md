@@ -1,354 +1,273 @@
-# Tunic — PROJECT.md
+# Tunic
 
-> **Tagline**: Beautiful Addresses, Made for You
-> **Version**: V1 (MVP)
-> **Status**: In Development
+**Beautiful Addresses, Made for You**
 
----
-
-## 1. Project Summary
-
-Tunic is a fully client-side web tool that generates vanity Ethereum (EVM) wallet addresses. Users input a custom pattern (prefix or suffix), and Tunic brute-forces keypairs until it finds an address that matches. The private key and matching address are displayed once to the user and never sent anywhere.
-
-There is no server, no backend, no database, and no network requests during the generation process.
+Tunic is a fully client-side vanity address generator for EVM-compatible chains and Solana. Enter a pattern or your name, and Tunic finds a wallet address that ends or starts with it. Everything runs in your browser. Nothing ever leaves your device.
 
 ---
 
-## 2. Goals
+## Features
 
-- Generate vanity EVM addresses based on user-defined prefix or suffix pattern
-- Keep all cryptographic operations fully client-side inside the browser
-- Never expose, transmit, or store the private key outside of the user's browser session
-- Ship as a static web app deployable on Vercel or Cloudflare Pages
+### Available (V1)
+- Generate vanity EVM addresses with custom prefix, suffix, or combine (prefix + suffix) pattern
+- Leetspeak converter: input your name or any word, Tunic converts it into up to 4 hex-compatible variants for you to choose from
+- Multi-worker parallelism: automatically detects your CPU core count and runs multiple workers simultaneously to maximize brute-force speed
+- SharedArrayBuffer coordination: workers self-terminate the moment a result is found, no wasted computation
+- Fully client-side: no server, no API, no database, no logging of any kind
+- Offline-ready: download the static build and run it without an internet connection
+
+### In Progress (V2)
+- Solana vanity address generation
+- Solana uses Base58 encoding, which means names like `bagas` or `singgih` can be used directly as patterns without any conversion
+- Separate `solana-engine` WASM module running in parallel with `evm-engine`
+
+### Planned (V3)
+- ERC-4337 smart contract wallet with WebAuthn (biometric) signer
+- Vanity address via CREATE2 salt brute-force
+- WalletConnect integration for DeFi connectivity
+- Paymaster support for gasless transactions
+- Multi-chain expansion
 
 ---
 
-## 3. Non-Goals (V1)
+## How It Works
 
-The following are explicitly out of scope for V1:
+### Pattern Input
+Two input methods are available:
 
-- Smart contract wallet (ERC-4337) — planned for V2
-- WebAuthn / biometric signer — planned for V2
-- WalletConnect / DeFi connectivity — planned for V3
-- Backend API or server of any kind
-- User authentication or accounts
-- Storing generated addresses or history
-- Mobile app or browser extension
+**Manual pattern**: enter a hex pattern directly (e.g. `3504`, `dead`, `cafe`). For EVM, only characters `0-9` and `a-f` are valid. For Solana (coming soon), the full Base58 alphabet is supported.
+
+**Leetspeak converter**: enter your name or a word (max 6 characters). Tunic maps characters to hex-compatible substitutions and generates up to 4 variants for you to pick from.
+
+| Input | Possible variants |
+|---|---|
+| `cafe` | `cafe`, `c4fe`, `caf3`, `c4f3` |
+| `bagas` | `8494`, `b494`, `8a94`, `ba94` |
+| `singgih` | `51991` (n and h are skipped, no hex equivalent) |
+
+### Position Mode
+- **Suffix**: pattern appears at the end of the address → `0x....3504`
+- **Prefix**: pattern appears at the start → `0x3504....`
+- **Combine**: pattern appears at both ends → `0x3504....3504`
+
+> Combine mode doubles the search space per character. A 3-character combine pattern is equivalent in difficulty to a 6-character single-end pattern. Keep combine patterns at 3 characters or fewer for reasonable generation time.
+
+### Generation Speed Estimates (EVM, single pattern end)
+
+| Pattern Length | Estimated Time |
+|---|---|
+| 4 characters | under 1 second |
+| 5 characters | a few seconds |
+| 6 characters | tens of seconds |
+| 8 characters | several minutes |
+
+Actual speed depends on your hardware. Tunic automatically scales to your CPU core count.
+
+### How Address Generation Works
+
+**EVM:**
+```
+1. Generate 32 random bytes as private key
+   └── via browser's crypto.getRandomValues (CSPRNG)
+2. Derive public key via ECDSA secp256k1
+3. keccak256 hash the public key
+4. Take last 20 bytes as the Ethereum address
+5. Check if address matches your pattern
+6. Match found → return { address, private_key }
+   No match → repeat from step 1
+```
+
+**Solana (coming soon):**
+```
+1. Generate 32 random bytes as private key
+   └── via browser's crypto.getRandomValues (CSPRNG)
+2. Derive public key via Ed25519
+3. Base58 encode the public key directly as the address (no hashing)
+4. Check if address matches your pattern
+5. Match found → return { address, private_key }
+   No match → repeat from step 1
+```
+
+### Multi-Worker Parallelism
+
+Tunic detects the number of logical CPU cores on your device via `navigator.hardwareConcurrency` and spawns up to 8 workers simultaneously, each running an independent WASM instance. Workers coordinate via `SharedArrayBuffer`: the moment one worker finds a match, it signals the others to stop. No wasted cycles.
+
+```
+navigator.hardwareConcurrency → workerCount = Math.min(cores, 8)
+
+Worker 1 ─┐
+Worker 2 ─┤
+Worker 3 ─┤→ first match found → signal via SharedArrayBuffer → all others stop
+Worker N ─┘
+```
 
 ---
 
-## 4. Tech Stack
+## Tech Stack
 
-| Layer | Technology | Notes |
+| Layer | Technology | Purpose |
 |---|---|---|
-| Vanity engine | Rust (compiled to WASM) | Core brute-force logic, keypair generation, pattern matching |
-| WASM bridge | wasm-bindgen | Exposes Rust functions to JavaScript |
-| Threading | Web Worker | Runs brute-force in background thread, keeps UI responsive |
-| Frontend framework | Next.js (TypeScript) | Static export mode, no SSR needed |
-| Styling | Tailwind CSS | Utility-first, no component library |
-| Hosting | Vercel or Cloudflare Pages | Static files only |
+| EVM engine | Rust + WASM | Keypair generation, keccak256, pattern matching |
+| Solana engine | Rust + WASM | Ed25519 keypair, Base58 encoding, pattern matching |
+| WASM bridge | wasm-bindgen | Rust to JavaScript interface |
+| Threading | Web Worker | Parallel brute-force without blocking UI |
+| Coordination | SharedArrayBuffer | Zero-overhead worker termination on result |
+| Frontend | Next.js + TypeScript | UI and state management |
+| Styling | Tailwind CSS | |
+| Hosting | Vercel / Cloudflare Pages | Static export, no server required |
 
 ---
 
-## 5. Project Structure
+## Project Structure
 
 ```
 tunic/
-├── engine/                             # Rust crate, compiled to WASM via wasm-pack
-│   ├── src/
-│   │   ├── lib.rs                    # Entry point, exposes generate_vanity() to JS
-│   │   ├── generator.rs              # Brute-force loop: generate keypair, check pattern
-│   │   ├── matcher.rs                # Pattern matching logic (prefix and suffix)
-│   │   └── crypto.rs                 # secp256k1 keypair generation, keccak256 hashing
-│   ├── tests/
-│   │   └── integration_test.rs       # Test correctness of address derivation and matching
-│   └── Cargo.toml
+├── engine/
+│   ├── Cargo.toml                  # Cargo workspace root
+│   ├── evm-engine/
+│   │   ├── src/
+│   │   │   ├── lib.rs              # WASM entry point
+│   │   │   ├── generator.rs        # Brute-force loop
+│   │   │   ├── matcher.rs          # Prefix / suffix / combine matching
+│   │   │   └── crypto.rs           # secp256k1 keypair + keccak256
+│   │   ├── tests/
+│   │   │   └── integration_test.rs
+│   │   └── Cargo.toml
+│   └── solana-engine/
+│       ├── src/
+│       │   ├── lib.rs
+│       │   ├── generator.rs
+│       │   ├── matcher.rs          # Case-sensitive Base58 matching
+│       │   └── crypto.rs           # Ed25519 keypair + Base58 encoding
+│       ├── tests/
+│       │   └── integration_test.rs
+│       └── Cargo.toml
 │
-└── frontend/                              # Next.js frontend
+└── frontend/
     ├── src/
     │   ├── app/
-    │   │   └── page.tsx              # Main page, renders InputForm and ResultCard
+    │   │   └── page.tsx
     │   ├── components/
-    │   │   ├── InputForm.tsx         # Pattern input, prefix/suffix toggle, generate button
-    │   │   └── ResultCard.tsx        # Displays generated address and private key
+    │   │   ├── InputForm.tsx
+    │   │   ├── ResultCard.tsx
+    │   │   └── LeetspeakPicker.tsx
     │   ├── hooks/
-    │   │   └── useVanityGenerator.ts # Spawns Web Worker, manages state (idle/loading/done/error)
-    │   └── workers/
-    │       └── vanity.worker.ts      # Loads WASM, calls generate_vanity(), posts result back
+    │   │   └── useVanityGenerator.ts   # Multi-worker orchestration
+    │   ├── workers/
+    │   │   ├── evm.worker.ts
+    │   │   └── solana.worker.ts
+    │   └── lib/
+    │       └── leetspeak.ts            # Pure TS leetspeak converter
     ├── public/
-    │   └── wasm/                     # Output from wasm-pack build, loaded by the worker
+    │   └── wasm/
+    │       ├── evm/                    # wasm-pack output for EVM
+    │       └── solana/                 # wasm-pack output for Solana
     └── package.json
 ```
 
 ---
 
-## 6. Rust Engine (`engine/`)
+## Rust Dependencies
 
-### 6.1 Dependencies (`Cargo.toml`)
+### `evm-engine`
+
+| Crate | Purpose |
+|---|---|
+| `wasm-bindgen` | Rust to JS bridge |
+| `k256` | secp256k1 keypair generation |
+| `tiny-keccak` | keccak256 hashing |
+| `getrandom` (js feature) | CSPRNG in browser environment |
+| `serde` + `serde_json` | Serialize result to JS |
+
+### `solana-engine`
+
+| Crate | Purpose |
+|---|---|
+| `wasm-bindgen` | Rust to JS bridge |
+| `ed25519-dalek` | Ed25519 keypair generation |
+| `bs58` | Base58 encoding |
+| `getrandom` (js feature) | CSPRNG in browser environment |
+| `serde` + `serde_json` | Serialize result to JS |
+
+### Workspace `profile.release`
 
 ```toml
-[lib]
-crate-type = ["cdylib"]
-
-[dependencies]
-wasm-bindgen = "0.2"
-k256 = "0.13"
-tiny-keccak = { version = "2.0", features = ["keccak"] }
-getrandom = { version = "0.2", features = ["js"] }
-serde = { version = "1.0", features = ["derive"] }
-serde-json = "1.0"
-```
-
-### 6.2 Public API (`lib.rs`)
-
-One function is exposed to JavaScript:
-
-```rust
-#[wasm_bindgen]
-pub fn generate_vanity(pattern: &str, is_suffix: bool) -> JsValue
-```
-
-Returns a JSON string: `{ "address": "0x...", "private_key": "0x..." }`
-
-### 6.3 Internal Flow (`generator.rs`)
-
-```
-loop:
-  1. Generate 32 random bytes as private key
-     └── via getrandom with "js" feature (uses browser crypto.getRandomValues)
-
-  2. Derive public key from private key
-     └── via k256, ECDSA secp256k1
-
-  3. Hash public key with keccak256
-     └── via tiny-keccak
-     └── take last 20 bytes as Ethereum address
-
-  4. Check pattern match via matcher.rs
-     └── is_suffix=true  → address ends with pattern
-     └── is_suffix=false → address starts with pattern (after "0x")
-
-  5. Match found → serialize to JSON, return to JS
-     No match → continue loop
-```
-
-### 6.4 Pattern Matching (`matcher.rs`)
-
-- Pattern matching is case-insensitive
-- Prefix check skips the leading `0x`
-- Only hex characters (0-9, a-f) are valid in patterns
-- Empty pattern should be rejected before entering the loop
-
-### 6.5 Address Derivation (`crypto.rs`)
-
-Standard EVM address derivation:
-1. Generate secp256k1 keypair
-2. Take the uncompressed public key (64 bytes, strip the 0x04 prefix)
-3. keccak256 hash the 64-byte public key
-4. Take the last 20 bytes (40 hex chars) as the address
-5. Prepend `0x`
-
-No EIP-55 checksum is applied at this stage. Can be added as a utility later.
-
----
-
-## 7. Frontend (`web/`)
-
-### 7.1 Dependencies (`package.json`)
-
-```json
-{
-  "dependencies": {
-    "next": "latest",
-    "react": "latest",
-    "react-dom": "latest"
-  },
-  "devDependencies": {
-    "typescript": "latest",
-    "tailwindcss": "latest",
-    "@types/react": "latest",
-    "@types/node": "latest"
-  }
-}
-```
-
-No viem, no ethers.js, no wallet libraries for V1.
-
-### 7.2 Next.js Configuration
-
-Use static export mode. Add to `next.config.ts`:
-
-```ts
-const nextConfig = {
-  output: "export",
-}
-```
-
-This produces a fully static build with no Node.js server required.
-
-### 7.3 `useVanityGenerator.ts`
-
-Manages the full lifecycle of the generation process:
-
-```
-States: idle | generating | done | error
-
-Actions:
-  - startGeneration(pattern, isSuffix): spawns Web Worker, sends message
-  - onWorkerMessage: receives { address, private_key }, updates state to done
-  - onWorkerError: updates state to error
-  - reset(): clears result, terminates worker, returns to idle
-```
-
-The hook never touches cryptographic logic directly. It only manages Worker communication and UI state.
-
-### 7.4 `vanity.worker.ts`
-
-Runs in a separate thread. Responsibilities:
-
-```
-1. Receive { pattern, isSuffix } from main thread via onmessage
-2. Load and initialize WASM module from /wasm/
-3. Call generate_vanity(pattern, isSuffix)
-4. Post result { address, private_key } back to main thread via postMessage
-```
-
-WASM is loaded once per worker instance. Worker is terminated after posting the result.
-
-### 7.5 `InputForm.tsx`
-
-Fields:
-- Text input for pattern (hex characters only, max 8 characters for reasonable UX)
-- Toggle for prefix or suffix
-- Generate button
-
-Validation before triggering generation:
-- Pattern must not be empty
-- Pattern must only contain valid hex characters: `[0-9a-fA-F]`
-- Show inline error if invalid
-
-### 7.6 `ResultCard.tsx`
-
-Displayed after generation completes:
-- Show the full generated address
-- Show the private key with a copy button
-- Display a non-skippable warning before revealing the private key:
-  > "Save your private key in a password manager. Do not screenshot it. Do not share it with anyone. This will not be shown again."
-- After user clicks confirm, reveal the private key
-- Provide a "Generate Another" button that calls reset()
-
-**Critical**: Never store address or private key in localStorage, sessionStorage, or any persistent browser storage. State lives only in React component memory and is cleared on reset.
-
----
-
-## 8. Generation Flow (End to End)
-
-```
-User enters pattern "3504", selects suffix
-            ↓
-InputForm validates input (hex only, not empty)
-            ↓
-useVanityGenerator.startGeneration("3504", true)
-            ↓
-Spawns vanity.worker.ts in background thread
-            ↓
-Worker loads WASM from /public/wasm/
-            ↓
-Worker calls generate_vanity("3504", true)
-            ↓
-Rust brute-force loop runs (blocking inside worker thread)
-            ↓
-Match found: address ending in "3504"
-            ↓
-Worker posts { address: "0x...3504", private_key: "0x..." }
-            ↓
-useVanityGenerator receives message, sets state to done
-            ↓
-ResultCard renders with warning → user confirms → private key revealed
-            ↓
-User copies private key, imports to Rabby or MetaMask
-            ↓
-User clicks "Generate Another" → state reset, worker terminated
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
 ```
 
 ---
 
-## 9. Security Model
+## Build
 
-| Concern | Mitigation |
-|---|---|
-| Private key exfiltration via network | No network requests during generation. Verified by absence of fetch/XHR in worker and engine |
-| Weak randomness | Uses `crypto.getRandomValues` via `getrandom` js feature, not `Math.random()` |
-| Malicious dependency | Minimal dependency tree, no unnecessary third-party packages |
-| Private key persisted in browser | Never written to localStorage, sessionStorage, or IndexedDB |
-| Supply chain attack | Open source, encourage offline usage, minimal deps |
-| UI thread blocked during generation | Web Worker isolates brute-force from main thread |
+### Prerequisites
+- Rust + `wasm-pack`
+- Node.js + npm
 
-### Offline Usage
-
-Users should be encouraged to:
-1. Download the static build
-2. Disconnect from the internet
-3. Open in browser locally
-4. Generate address offline
-
-Instructions for this will be included in the README and on the site.
-
----
-
-## 10. Build Process
-
-### Rust → WASM
+### Build engines
 
 ```bash
-cd solana-engine
-wasm-pack build --target web --out-dir ../../frontend/public/wasm/solana-engine --release
+# EVM engine
+wasm-pack build engine/evm-engine --target web --out-dir frontend/public/wasm/evm
+
+# Solana engine (once ready)
+wasm-pack build engine/solana-engine --target web --out-dir frontend/public/wasm/solana
 ```
 
-```bash
-cd evm-engine
-wasm-pack build --target web --out-dir ../../frontend/public/wasm/evm-engine --release
-```
-
-Output files placed in `frontend/public/wasm/`:
-- `tunic_engine.js`
-- `tunic_engine_bg.wasm`
-- `package.json`
-
-### Frontend
+### Run frontend
 
 ```bash
 cd frontend
 pnpm install
-pnpm run build
+pnpm dev
 ```
 
-Output is a static site in `frontend/out/`, ready for deployment to Vercel or Cloudflare Pages.
+Output is in `frontend/out/`, ready for deployment to Vercel or Cloudflare Pages.
 
 ---
 
-## 11. Estimated Generation Speed (Browser, Single Thread)
+## Security
 
-| Pattern Length | Estimated Time |
+| Concern | Mitigation |
 |---|---|
-| 4 characters | under 1 second |
-| 6 characters | a few seconds |
-| 8 characters | several minutes |
-| 10+ characters | tens of minutes or more |
+| Private key sent to server | No network requests during generation. Worker and engine have no fetch or XHR calls |
+| Weak randomness | `crypto.getRandomValues` via `getrandom` js feature. Never `Math.random()` |
+| Private key persisted | Never written to localStorage, sessionStorage, or IndexedDB |
+| Supply chain attack | Minimal dependencies, open source, offline usage encouraged |
+| UI thread blocked | All brute-force runs inside Web Workers, main thread stays responsive |
+| Other workers wasting cycles | SharedArrayBuffer flag stops all workers immediately on first match |
 
-Suffix patterns are faster than prefix patterns because the prefix `0x` reduces the effective matching space.
+### Private Key Handling
+- Displayed once after generation completes
+- Cleared from memory when user resets or closes the result
+- A non-skippable confirmation is required before the key is revealed
+- Never stored anywhere outside of React component state
+
+### Offline Usage
+Download the static build, disconnect from the internet, open in browser. Instructions are available on the site. This eliminates any risk of malicious script injection via network.
 
 ---
 
-## 13. Key Constraints and Rules for AI Agents
+## Roadmap
 
-- Never add server-side logic, API routes, or backend of any kind to V1
-- Never use localStorage or sessionStorage for private key or address storage
-- Never add network requests inside `vanity.worker.ts` or `engine/`
-- Keep Rust dependencies minimal, only what is listed in section 6.1
-- Keep frontend dependencies minimal, only what is listed in section 7.1
-- All cryptographic logic lives in Rust engine, not in JavaScript
-- Web Worker is mandatory, never run brute-force on the main thread
-- Pattern validation must happen on the frontend before passing to WASM
-- Static export must be maintained, do not introduce SSR or API routes
-- Private key must be cleared from state after user resets or closes ResultCard
+| Version | Scope |
+|---|---|
+| V1 | EVM vanity address generator, fully client-side |
+| V2 | Solana vanity address generator, Base58 pattern support |
+| V3 | ERC-4337 smart wallet, WebAuthn signer, WalletConnect, DeFi connectivity |
+
+---
+
+## Contributing
+
+Tunic is open source. If you find a bug, have a suggestion, or want to contribute, open an issue or pull request on GitHub.
+
+If you find this useful, sharing it on X is appreciated.
+
+---
+
+## License
+
+MIT
